@@ -8,6 +8,8 @@ Gemini Red Team dùng Google ADK trong agents/*.py — không đi qua file này.
 """
 from __future__ import annotations
 
+import asyncio
+
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -49,7 +51,13 @@ class OpenAIRunner:
     def _client(self):
         from openai import OpenAI
 
-        return OpenAI(**(self.client_kwargs or {}))
+
+        kwargs = dict(self.client_kwargs or {})
+        kwargs.setdefault("timeout", 60.0)
+        kwargs.setdefault("max_retries", 0)
+
+        return OpenAI(**kwargs)
+
 
     async def chat(self, agent: OpenAIAgent, user_message: str) -> str:
         for hook in self.input_hooks:
@@ -61,15 +69,22 @@ class OpenAIRunner:
         if block_msg is not None:
             return block_msg
 
+
         client = self._client()
-        completion = client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": agent.instruction},
-                {"role": "user", "content": user_message},
-            ],
-            temperature=self.temperature,
-        )
+
+        def call_model():
+            return client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": agent.instruction},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=self.temperature,
+                timeout=60.0,
+            )
+
+        completion = await asyncio.to_thread(call_model)
+
         text = (completion.choices[0].message.content or "").strip()
 
         for hook in self.output_hooks:
